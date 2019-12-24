@@ -54,29 +54,20 @@ def simplify(curve: np.ndarray, order: int = 3, smoothing=100, n_points=100, ext
     ], 1)
 
 
-def get_local_coordinates(curve):
-    result = np.zeros_like(curve)
-    result[:, 0] = cumulative_length(curve)
-    return result
-
-
-def switch_basis(point, source_origins, target_origins, target_basis):
-    points = point - source_origins
-    idx = np.linalg.norm(points, axis=-1).argmin()
-    local = np.einsum('nij,nj->ni', target_basis, points)
-    distances = local[:, 0]
+def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
+    idx = distance_to_origin.argmin()
 
     # how many good planes are there?
-    candidates, = np.diff(np.sign(distances)).nonzero()
+    candidates, = np.diff(np.sign(distance_to_plane)).nonzero()
     # choose the closest one to the basis' origin
     idx = candidates[np.abs(candidates - idx).argmin()]
     slc = slice(max(0, idx - 2), idx + 2)
 
-    distances = distances[slc]
-    local = local[slc] + target_origins[slc]
+    distance_to_plane = distance_to_plane[slc]
+    coordinates = coordinates[slc]
     # ensure that there is exactly one zero
-    assert len(np.diff(np.sign(distances)).nonzero()[0]) == 1
-    return interp1d(distances, local, axis=0)(0)
+    assert len(np.diff(np.sign(distance_to_plane)).nonzero()[0]) == 1
+    return interp1d(distance_to_plane, coordinates, axis=0)(0)
 
 
 class Interpolator:
@@ -130,10 +121,22 @@ class Interpolator:
         return centers
 
     def _to_local(self, point, shape):
-        return switch_basis(point, self.even_curve, self._get_centers(shape), np.moveaxis(self.basis, -1, -2))
+        points = point - self.even_curve
+        to_origin = np.linalg.norm(points, axis=-1)
+
+        points = np.einsum('nji,nj->ni', self.basis, points)
+        to_plane = points[:, 0]
+
+        return interpolate_coords(points + self._get_centers(shape), to_origin, to_plane)
 
     def _to_global(self, point, shape):
-        return switch_basis(point, self._get_centers(shape), self.even_curve, self.basis)
+        points = point - self._get_centers(shape)
+        to_plane = points[:, 0]
+
+        points = np.einsum('nij,nj->ni', self.basis, points)
+        to_origin = np.linalg.norm(points, axis=-1)
+
+        return interpolate_coords(points + self.even_curve, to_origin, to_plane)
 
     @staticmethod
     def _transform(points, shape, func):
@@ -150,7 +153,7 @@ class Interpolator:
     def _check_points(self, points):
         points = np.asarray(points)
         *spatial, d = points.shape
-        assert d == self.dim
+        assert d == self.dim, (d, self.dim)
         return points
 
     def global_to_local(self, points, shape):
