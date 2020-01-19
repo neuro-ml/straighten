@@ -1,3 +1,4 @@
+import warnings
 from typing import Union, Sequence, Callable
 
 import numpy as np
@@ -66,7 +67,8 @@ def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
     distance_to_plane = distance_to_plane[slc]
     coordinates = coordinates[slc]
     # ensure that there is exactly one zero
-    assert len(np.diff(np.sign(distance_to_plane)).nonzero()[0]) == 1
+    if len(np.diff(np.sign(distance_to_plane)).nonzero()[0]) != 1:
+        warnings.warn("Couldn't choose a local basis.")
     return interp1d(distance_to_plane, coordinates, axis=0)(0)
 
 
