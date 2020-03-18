@@ -72,16 +72,20 @@ def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
     return interp1d(distance_to_plane, coordinates, axis=0)(0)
 
 
+def identity(x):
+    return x
+
+
 class Interpolator:
     def __init__(self, curve: np.ndarray, step: float, spacing: ShapeLike = 1,
-                 get_local_basis: Callable = frenet_serret):
+                 get_local_basis: Callable = frenet_serret, shift_basis: Callable = identity):
         """
         Parameters
         ----------
         curve: array of shape (n_points, dim)
         step: step size along the curve
-        get_local_basis: Callable(*gradients) -> local_basis
         spacing: the nd-pixel spacing
+        get_local_basis: Callable(curve) -> local_basis
 
         Returns
         -------
@@ -89,12 +93,10 @@ class Interpolator:
         """
         assert curve.ndim == 2
         self.dim = curve.shape[1]
-        self.step = step
         self.spacing = np.broadcast_to(spacing, self.dim)
-        self.get_local_basis = get_local_basis
 
-        self.curve = curve * spacing
-        self.even_curve, *grads = get_derivatives(self.curve, step)
+        even_curve, *grads = get_derivatives(curve * spacing, step)
+        self.even_curve = shift_basis(even_curve)
         self.basis = get_local_basis(*grads)
 
     def get_grid(self, shape: ShapeLike):
