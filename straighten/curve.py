@@ -60,16 +60,18 @@ def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
 
     # how many good planes are there?
     candidates, = np.diff(np.sign(distance_to_plane)).nonzero()
-    # choose the closest one to the basis' origin
-    idx = candidates[np.abs(candidates - idx).argmin()]
+    # ensure that there is exactly one zero
+    if len(candidates) != 1:
+        warnings.warn("Couldn't choose a local basis.")
+
+    # adjust the index by the point of sign change
+    if len(candidates) > 0:
+        idx = candidates[np.abs(candidates - idx).argmin()]
     slc = slice(max(0, idx - 2), idx + 2)
 
     distance_to_plane = distance_to_plane[slc]
     coordinates = coordinates[slc]
-    # ensure that there is exactly one zero
-    if len(np.diff(np.sign(distance_to_plane)).nonzero()[0]) != 1:
-        warnings.warn("Couldn't choose a local basis.")
-    return interp1d(distance_to_plane, coordinates, axis=0)(0)
+    return interp1d(distance_to_plane, coordinates, axis=0, bounds_error=False, fill_value='extrapolate')(0)
 
 
 def identity(x):
