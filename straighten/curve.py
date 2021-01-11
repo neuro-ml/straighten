@@ -1,4 +1,3 @@
-import warnings
 from typing import Union, Sequence, Callable
 
 import numpy as np
@@ -55,14 +54,16 @@ def simplify(curve: np.ndarray, order: int = 3, smoothing=100, n_points=100, ext
     ], 1)
 
 
-def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
+def interpolate_coords(coordinates, distance_to_origin, distance_to_plane, error=True, ignore=True):
     idx = distance_to_origin.argmin()
 
     # how many good planes are there?
     candidates, = np.diff(np.sign(distance_to_plane)).nonzero()
     # ensure that there is exactly one zero
-    if len(candidates) != 1:
-        warnings.warn("Couldn't choose a local basis.")
+    if len(candidates) != 1 and not ignore:
+        if error:
+            raise ValueError("Couldn't choose a local basis.")
+        return np.full_like(coordinates[0], np.nan)
 
     # adjust the index by the point of sign change
     if len(candidates) > 0:
@@ -126,33 +127,33 @@ class Interpolator:
         centers[:, 1:] = shape / 2
         return centers
 
-    def _to_local(self, point, shape):
+    def _to_local(self, point, shape, error, ignore):
         points = point - self.even_curve
         to_origin = np.linalg.norm(points, axis=-1)
 
         points = np.einsum('nji,nj->ni', self.basis, points)
         to_plane = points[:, 0]
 
-        return interpolate_coords(points + self._get_centers(shape), to_origin, to_plane)
+        return interpolate_coords(points + self._get_centers(shape), to_origin, to_plane, error, ignore)
 
-    def _to_global(self, point, shape):
+    def _to_global(self, point, shape, error, ignore):
         points = point - self._get_centers(shape)
         to_plane = points[:, 0]
 
         points = np.einsum('nij,nj->ni', self.basis, points)
         to_origin = np.linalg.norm(points, axis=-1)
 
-        return interpolate_coords(points + self.even_curve, to_origin, to_plane)
+        return interpolate_coords(points + self.even_curve, to_origin, to_plane, error, ignore)
 
     @staticmethod
-    def _transform(points, shape, func):
+    def _transform(points, shape, func, error, ignore):
         # point: *any, dim
         *spatial, d = points.shape
         shape = np.broadcast_to(shape, d - 1)
         points = points.reshape(-1, d)
         results = []
         for p in points:
-            results.append(func(p, shape))
+            results.append(func(p, shape, error, ignore))
 
         return np.array(results).reshape(*spatial, d)
 
@@ -162,8 +163,8 @@ class Interpolator:
         assert d == self.dim, (d, self.dim)
         return points
 
-    def global_to_local(self, points, shape):
-        return self._transform(self._check_points(points) * self.spacing, shape, self._to_local)
+    def global_to_local(self, points, shape, ignore=True, error=True):
+        return self._transform(self._check_points(points) * self.spacing, shape, self._to_local, error, ignore)
 
-    def local_to_global(self, points, shape):
-        return self._transform(self._check_points(points), shape, self._to_global) / self.spacing
+    def local_to_global(self, points, shape, ignore=True, error=True):
+        return self._transform(self._check_points(points), shape, self._to_global, error, ignore) / self.spacing
