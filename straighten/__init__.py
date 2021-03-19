@@ -1,3 +1,3 @@
-from .curve import Interpolator, simplify, frenet_serret
+from .curve import Interpolator, frenet_serret, pixel_to_spatial, spatial_to_pixel
 
-__version__ = '0.1.1'
+__version__ = '0.2.0'

@@ -3,9 +3,157 @@ from typing import Union, Sequence, Callable
 
 import numpy as np
 from scipy.ndimage.interpolation import map_coordinates
-from scipy.interpolate import interp1d, UnivariateSpline
+from scipy.interpolate import interp1d
 
 ShapeLike = Union[int, Sequence[int]]
+
+
+def frenet_serret(*gradients):
+    _, d = gradients[0].shape
+    basis = []
+    for grad in gradients:
+        e = grad
+        # Gram-Schmidt process
+        for v in basis:
+            e = e - v * (v * grad).sum(axis=-1, keepdims=True)
+
+        e /= np.linalg.norm(e, axis=-1, keepdims=True)
+        basis.append(e)
+
+    return np.stack(basis, -1)
+
+
+class Interpolator:
+    def __init__(self, curve: np.ndarray, step: float,
+                 spacing: Union[float, Sequence[Union[float, Sequence[float]]]] = 1,
+                 get_local_basis: Callable = frenet_serret):
+        """
+        Parameters
+        ----------
+        curve: array of shape (n_points, dim)
+        step: step size along the curve
+        spacing: the nd-pixel spacing
+        get_local_basis: Callable(*gradients) -> local_basis
+
+        Returns
+        -------
+        grid: (dim, n_points, *shape)
+        """
+        assert curve.ndim == 2
+        dim = curve.shape[1]
+        if isinstance(spacing, (int, float)):
+            spacing = [spacing] * dim
+        if dim != len(spacing):
+            raise ValueError(f'"spacing" must contain {dim} elements, but {len(spacing)} provided.')
+
+        even_curve, *grads = get_derivatives(pixel_to_spatial(curve, spacing), step)
+        self.dim = dim
+        self.spacing = spacing
+        self.knots = even_curve
+        self.basis = get_local_basis(*grads)
+
+    def get_grid(self, shape: ShapeLike):
+        shape = np.broadcast_to(shape, self.dim - 1)
+        grid = np.meshgrid(*(np.arange(s) - s / 2 for s in shape))
+        zs = np.zeros_like(grid[0])
+        grid = np.stack([zs, *grid])
+
+        grid = np.einsum('Nij,j...->Ni...', self.basis, grid)
+        grid = np.moveaxis(grid, [0, 1], [-2, -1])
+        grid = spatial_to_pixel(grid + self.knots, self.spacing)
+        return np.moveaxis(grid, [-2, -1], [1, 0])
+
+    def interpolate_along(self, array, shape: ShapeLike, fill_value: Union[float, Callable] = 0, order: int = 1):
+        """
+        shape: the desired shape of the planes
+        """
+        if callable(fill_value):
+            fill_value = fill_value(array)
+        return map_coordinates(array, self.get_grid(shape), order=order, cval=fill_value)
+
+    def global_to_local(self, points, shape: ShapeLike):
+        """
+        Converts the coordinates from image space to local coordinates along the curve.
+        """
+        return self._transform(pixel_to_spatial(self._check_points(points), self.spacing), shape, self._to_local)
+
+    def local_to_global(self, points, shape: ShapeLike):
+        """
+        Converts the coordinates from local coordinates along the curve to image space.
+        """
+        return spatial_to_pixel(self._transform(self._check_points(points), shape, self._to_global), self.spacing)
+
+    def _get_centers(self, shape):
+        centers = np.zeros_like(self.knots)
+        centers[:, 0] = cumulative_length(self.knots)
+        centers[:, 1:] = shape / 2
+        return centers
+
+    def _to_local(self, point, shape):
+        points = point - self.knots
+        to_origin = np.linalg.norm(points, axis=-1)
+
+        points = np.einsum('nji,nj->ni', self.basis, points)
+        to_plane = points[:, 0]
+
+        return interpolate_coords(points + self._get_centers(shape), to_origin, to_plane)
+
+    def _to_global(self, point, shape):
+        points = point - self._get_centers(shape)
+        to_plane = points[:, 0]
+
+        points = np.einsum('nij,nj->ni', self.basis, points)
+        to_origin = np.linalg.norm(points, axis=-1)
+
+        return interpolate_coords(points + self.knots, to_origin, to_plane)
+
+    @staticmethod
+    def _transform(points, shape, func):
+        # point: *any, dim
+        *spatial, d = points.shape
+        shape = np.broadcast_to(shape, d - 1)
+        points = points.reshape(-1, d)
+        results = []
+        for p in points:
+            results.append(func(p, shape))
+
+        return np.array(results).reshape(*spatial, d)
+
+    def _check_points(self, points):
+        points = np.asarray(points)
+        *spatial, d = points.shape
+        assert d == self.dim, (d, self.dim)
+        return points
+
+
+def pixel_to_spatial(points, spacing):
+    points = np.asarray(points)
+    assert points.shape[-1] == len(spacing)
+    result = []
+    for i, sp in enumerate(spacing):
+        axis = points[..., i]
+        if isinstance(sp, (int, float)):
+            axis = axis * sp
+        else:
+            axis = interp1d(np.arange(len(sp)), sp, bounds_error=False, fill_value='extrapolate')(axis)
+
+        result.append(axis)
+    return np.stack(result, -1)
+
+
+def spatial_to_pixel(points, spacing):
+    points = np.asarray(points)
+    assert points.shape[-1] == len(spacing)
+    result = []
+    for i, sp in enumerate(spacing):
+        axis = points[..., i]
+        if isinstance(sp, (int, float)):
+            axis = axis / sp
+        else:
+            axis = interp1d(sp, np.arange(len(sp)), bounds_error=False, fill_value='extrapolate')(axis)
+
+        result.append(axis)
+    return np.stack(result, -1)
 
 
 def cumulative_length(curve: np.ndarray):
@@ -28,33 +176,6 @@ def get_derivatives(curve: np.ndarray, step: float):
         yield interp1d(lengths, grad, axis=0)(xs)
 
 
-def frenet_serret(*gradients):
-    _, d = gradients[0].shape
-    basis = []
-    for grad in gradients:
-        e = grad
-        # Gram-Schmidt process
-        for v in basis:
-            e = e - v * (v * grad).sum(axis=-1, keepdims=True)
-
-        e /= np.linalg.norm(e, axis=-1, keepdims=True)
-        basis.append(e)
-
-    return np.stack(basis, -1)
-
-
-def simplify(curve: np.ndarray, order: int = 3, smoothing=100, n_points=100, extrapolate=(0, 0)):
-    # natural parametrization
-    lengths = cumulative_length(curve)
-
-    extrapolate = np.broadcast_to(extrapolate, 2)
-    alpha = np.linspace(-extrapolate[0], lengths[-1] + extrapolate[1], n_points)
-    # fit a spline for each dimension
-    return np.stack([
-        UnivariateSpline(lengths, coords, k=order, s=smoothing, ext='extrapolate')(alpha) for coords in curve.T
-    ], 1)
-
-
 def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
     idx = distance_to_origin.argmin()
 
@@ -72,98 +193,3 @@ def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
     distance_to_plane = distance_to_plane[slc]
     coordinates = coordinates[slc]
     return interp1d(distance_to_plane, coordinates, axis=0, bounds_error=False, fill_value='extrapolate')(0)
-
-
-def identity(x):
-    return x
-
-
-class Interpolator:
-    def __init__(self, curve: np.ndarray, step: float, spacing: ShapeLike = 1,
-                 get_local_basis: Callable = frenet_serret, shift_basis: Callable = identity):
-        """
-        Parameters
-        ----------
-        curve: array of shape (n_points, dim)
-        step: step size along the curve
-        spacing: the nd-pixel spacing
-        get_local_basis: Callable(curve) -> local_basis
-
-        Returns
-        -------
-        grid: (dim, n_points, *shape)
-        """
-        assert curve.ndim == 2
-        self.dim = curve.shape[1]
-        self.spacing = np.broadcast_to(spacing, self.dim)
-
-        even_curve, *grads = get_derivatives(curve * spacing, step)
-        self.even_curve = shift_basis(even_curve)
-        self.basis = get_local_basis(*grads)
-
-    def get_grid(self, shape: ShapeLike):
-        shape = np.broadcast_to(shape, self.dim - 1)
-        grid = np.meshgrid(*(np.arange(s) - s / 2 for s in shape))
-        zs = np.zeros_like(grid[0])
-        grid = np.stack([zs, *grid])
-
-        grid = np.einsum('Nij,j...->Ni...', self.basis, grid)
-        grid = np.moveaxis(grid, [0, 1], [-2, -1])
-        grid = (grid + self.even_curve) / self.spacing
-        return np.moveaxis(grid, [-2, -1], [1, 0])
-
-    def interpolate_along(self, array, shape, fill_value=0, order=1):
-        """
-        shape: the desired shape of the planes
-        """
-        if callable(fill_value):
-            fill_value = fill_value(array)
-        return map_coordinates(array, self.get_grid(shape), order=order, cval=fill_value)
-
-    def _get_centers(self, shape):
-        centers = np.zeros_like(self.even_curve)
-        centers[:, 0] = cumulative_length(self.even_curve)
-        centers[:, 1:] = shape / 2
-        return centers
-
-    def _to_local(self, point, shape):
-        points = point - self.even_curve
-        to_origin = np.linalg.norm(points, axis=-1)
-
-        points = np.einsum('nji,nj->ni', self.basis, points)
-        to_plane = points[:, 0]
-
-        return interpolate_coords(points + self._get_centers(shape), to_origin, to_plane)
-
-    def _to_global(self, point, shape):
-        points = point - self._get_centers(shape)
-        to_plane = points[:, 0]
-
-        points = np.einsum('nij,nj->ni', self.basis, points)
-        to_origin = np.linalg.norm(points, axis=-1)
-
-        return interpolate_coords(points + self.even_curve, to_origin, to_plane)
-
-    @staticmethod
-    def _transform(points, shape, func):
-        # point: *any, dim
-        *spatial, d = points.shape
-        shape = np.broadcast_to(shape, d - 1)
-        points = points.reshape(-1, d)
-        results = []
-        for p in points:
-            results.append(func(p, shape))
-
-        return np.array(results).reshape(*spatial, d)
-
-    def _check_points(self, points):
-        points = np.asarray(points)
-        *spatial, d = points.shape
-        assert d == self.dim, (d, self.dim)
-        return points
-
-    def global_to_local(self, points, shape):
-        return self._transform(self._check_points(points) * self.spacing, shape, self._to_local)
-
-    def local_to_global(self, points, shape):
-        return self._transform(self._check_points(points), shape, self._to_global) / self.spacing
