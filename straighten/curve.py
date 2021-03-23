@@ -34,10 +34,6 @@ class Interpolator:
         step: step size along the curve
         spacing: the nd-pixel spacing
         get_local_basis: Callable(*gradients) -> local_basis
-
-        Returns
-        -------
-        grid: (dim, n_points, *shape)
         """
         assert curve.ndim == 2
         dim = curve.shape[1]
@@ -53,6 +49,18 @@ class Interpolator:
         self.basis = get_local_basis(*grads)
 
     def get_grid(self, shape: ShapeLike):
+        """
+        Make the grid onto which images will be interpolated.
+
+        Parameters
+        ----------
+        shape:
+            the desired shape of the image
+
+        Returns
+        -------
+        grid: (dim, n_points, *shape)
+        """
         shape = np.broadcast_to(shape, self.dim - 1)
         grid = np.meshgrid(*(np.arange(s) - s / 2 for s in shape))
         zs = np.zeros_like(grid[0])
@@ -65,7 +73,26 @@ class Interpolator:
 
     def interpolate_along(self, array, shape: ShapeLike, fill_value: Union[float, Callable] = 0, order: int = 1):
         """
-        shape: the desired shape of the planes
+        Interpolates an incoming image along the curve.
+
+        Parameters
+        ----------
+        array:
+            the image to be interpolated
+        shape:
+            the output shape of the image along all the axes, except the first one
+        fill_value:
+            the value to be used outside of actual image limits
+        order:
+            the order of interpolation
+
+        Examples
+        --------
+        >>> inter = Interpolator(curve, 1, 1)
+        # `image` is a 3d image
+        >>> x = inter.interpolate_along(image, (50, 50))
+        >>> x.shape
+        (28, 50, 50) # 28 is the number of points taken with step 1 along the curve
         """
         if callable(fill_value):
             fill_value = fill_value(array)
@@ -183,7 +210,7 @@ def interpolate_coords(coordinates, distance_to_origin, distance_to_plane):
     candidates, = np.diff(np.sign(distance_to_plane)).nonzero()
     # ensure that there is exactly one zero
     if len(candidates) != 1:
-        warnings.warn("Couldn't choose a local basis.")
+        warnings.warn("Couldn't uniquely choose a local basis.")
 
     # adjust the index by the point of sign change
     if len(candidates) > 0:
