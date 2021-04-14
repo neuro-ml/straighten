@@ -35,12 +35,15 @@ class Interpolator:
         spacing: the nd-pixel spacing
         get_local_basis: Callable(*gradients) -> local_basis
         """
-        assert curve.ndim == 2
+        if curve.ndim != 2:
+            raise ValueError(f'The curve shape must be (n_points, dim), but {curve.shape} provided.')
         dim = curve.shape[1]
         if isinstance(spacing, (int, float)):
             spacing = [spacing] * dim
         if dim != len(spacing):
             raise ValueError(f'"spacing" must contain {dim} elements, but {len(spacing)} provided.')
+        if not np.isfinite(curve).all():
+            raise ValueError(f'The curve must contain only finite values.')
 
         even_curve, *grads = get_derivatives(pixel_to_spatial(curve, spacing), step)
         self.dim = dim
@@ -153,34 +156,36 @@ class Interpolator:
         return points
 
 
-def pixel_to_spatial(points, spacing):
-    points = np.asarray(points)
-    assert points.shape[-1] == len(spacing)
-    result = []
-    for i, sp in enumerate(spacing):
-        axis = points[..., i]
-        if isinstance(sp, (int, float)):
-            axis = axis * sp
-        else:
-            axis = interp1d(np.arange(len(sp)), sp, bounds_error=False, fill_value='extrapolate')(axis)
+def pixel_to_spatial(points, spacing, v=False):
+    with np.errstate(divide='raise', invalid='raise'):
+        points = np.asarray(points)
+        assert points.shape[-1] == len(spacing)
+        result = []
+        for i, sp in enumerate(spacing):
+            axis = points[..., i]
+            if isinstance(sp, (int, float)):
+                axis = axis * sp
+            else:
+                axis = interp1d(np.arange(len(sp)), sp, bounds_error=False, fill_value='extrapolate')(axis)
 
-        result.append(axis)
-    return np.stack(result, -1)
+            result.append(axis)
+        return np.stack(result, -1)
 
 
 def spatial_to_pixel(points, spacing):
-    points = np.asarray(points)
-    assert points.shape[-1] == len(spacing)
-    result = []
-    for i, sp in enumerate(spacing):
-        axis = points[..., i]
-        if isinstance(sp, (int, float)):
-            axis = axis / sp
-        else:
-            axis = interp1d(sp, np.arange(len(sp)), bounds_error=False, fill_value='extrapolate')(axis)
+    with np.errstate(divide='raise', invalid='raise'):
+        points = np.asarray(points)
+        assert points.shape[-1] == len(spacing)
+        result = []
+        for i, sp in enumerate(spacing):
+            axis = points[..., i]
+            if isinstance(sp, (int, float)):
+                axis = axis / sp
+            else:
+                axis = interp1d(sp, np.arange(len(sp)), bounds_error=False, fill_value='extrapolate')(axis)
 
-        result.append(axis)
-    return np.stack(result, -1)
+            result.append(axis)
+        return np.stack(result, -1)
 
 
 def cumulative_length(curve: np.ndarray):
