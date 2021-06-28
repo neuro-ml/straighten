@@ -160,6 +160,9 @@ class Interpolator:
 def pixel_to_spatial(points, spacing, v=False):
     with np.errstate(divide='raise', invalid='raise'):
         points = np.asarray(points)
+        if not points.size:
+            return points
+
         _check_dim_consistency(points.shape, spacing)
         result = []
         for i, sp in enumerate(spacing):
@@ -176,6 +179,9 @@ def pixel_to_spatial(points, spacing, v=False):
 def spatial_to_pixel(points, spacing):
     with np.errstate(divide='raise', invalid='raise'):
         points = np.asarray(points)
+        if not points.size:
+            return points
+
         _check_dim_consistency(points.shape, spacing)
         result = []
         for i, sp in enumerate(spacing):
