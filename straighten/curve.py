@@ -151,15 +151,16 @@ class Interpolator:
 
     def _check_points(self, points):
         points = np.asarray(points)
-        *spatial, d = points.shape
-        assert d == self.dim, (d, self.dim)
+        d = points.shape[-1]
+        if d != self.dim:
+            raise ValueError(f"The points dim ({d}) doesn't match the curve dim ({self.dim}).")
         return points
 
 
 def pixel_to_spatial(points, spacing, v=False):
     with np.errstate(divide='raise', invalid='raise'):
         points = np.asarray(points)
-        assert points.shape[-1] == len(spacing)
+        _check_dim_consistency(points.shape, spacing)
         result = []
         for i, sp in enumerate(spacing):
             axis = points[..., i]
@@ -175,7 +176,7 @@ def pixel_to_spatial(points, spacing, v=False):
 def spatial_to_pixel(points, spacing):
     with np.errstate(divide='raise', invalid='raise'):
         points = np.asarray(points)
-        assert points.shape[-1] == len(spacing)
+        _check_dim_consistency(points.shape, spacing)
         result = []
         for i, sp in enumerate(spacing):
             axis = points[..., i]
@@ -186,6 +187,11 @@ def spatial_to_pixel(points, spacing):
 
             result.append(axis)
         return np.stack(result, -1)
+
+
+def _check_dim_consistency(shape, spacing):
+    if shape[-1] != len(spacing):
+        raise ValueError(f"The points dim ({shape[-1]}) doesn't match the spacing size ({len(spacing)})")
 
 
 def cumulative_length(curve: np.ndarray):
