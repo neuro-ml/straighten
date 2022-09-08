@@ -32,7 +32,7 @@ setup(
     license='MIT',
     url='https://github.com/neuro-ml/straighten',
     download_url='https://github.com/neuro-ml/straighten/archive/v%s.tar.gz' % __version__,
-    keywords=['data', 'version control'],
+    keywords=['differential geometry', 'basis', 'curves'],
     classifiers=classifiers.splitlines(),
     install_requires=requirements,
 )
