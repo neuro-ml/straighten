@@ -2,7 +2,7 @@ import warnings
 from typing import Union, Sequence, Callable
 
 import numpy as np
-from scipy.ndimage.interpolation import map_coordinates
+from scipy.ndimage import map_coordinates
 from scipy.interpolate import interp1d
 
 ShapeLike = Union[int, Sequence[int]]
